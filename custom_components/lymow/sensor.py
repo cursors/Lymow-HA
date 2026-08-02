@@ -53,6 +53,7 @@ from .const import (
 )
 from .coordinator import LymowCoordinator
 from .entity_base import LymowEntity
+from .path_engine import build_coverage_track
 
 # ── Label maps ────────────────────────────────────────────────
 
@@ -1396,7 +1397,7 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
     # maximum size" warning + DB churn while leaving the live attributes full-size.
     _unrecorded_attributes = frozenset({
         "geojson", "geojson_zones", "geojson_nogo_zones", "geojson_mowed_area",
-        "geojson_dock", "geojson_robot", "geojson_rtk_antenna",
+        "geojson_dock", "geojson_robot", "geojson_rtk_antenna", "geojson_coverage_track",
     })
 
     def __init__(self, coordinator: LymowCoordinator) -> None:
@@ -1430,6 +1431,7 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
 
         # Only rebuild when something meaningful actually changed.
         mowed_polygons = data.get("mowed_area_polygons") or []
+        breadcrumb_pts = data.get("breadcrumb_track") or []
 
         mowed_area_points_count = sum(
             len(poly)
@@ -1450,6 +1452,7 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
             len(mowed_polygons),
             mowed_area_points_count,
             has_origin,
+            len(breadcrumb_pts) // 15,
         )
         if cache_key == self._cache_key and self._geojson_cache is not None:
             return self._geojson_cache
@@ -1624,6 +1627,38 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
             features.append(feature)
             mowed_area_features.append(feature)
 
+        # Coverage track — decimated breadcrumb path as a MultiLineString, for map
+        # cards that want the mower's real driven path instead of the mowed_area hull.
+        # See docs/COVERAGE_TRACK_DESIGN.md.
+        coverage_runs = build_coverage_track(breadcrumb_pts)
+        coverage_track_point_count = sum(len(r) for r in coverage_runs)
+        track_coords: list[list[list[float]]] = []
+        for run in coverage_runs:
+            if has_origin:
+                line = []
+                for x, y in run:
+                    lat, lon = _enu_to_latlon(x, y, lat0, lon0)
+                    line.append([round(lon, 8), round(lat, 8)])
+            else:
+                line = [[x, y] for x, y in run]
+            track_coords.append(line)
+
+        track_geometry: dict[str, Any] = {"type": "MultiLineString", "coordinates": track_coords}
+        if not has_origin:
+            track_geometry["_crs"] = "ENU_metres"
+
+        coverage_track_features: list[dict[str, Any]] = []
+        if coverage_runs:
+            coverage_track_features.append({
+                "type": "Feature",
+                "properties": {
+                    "type": "coverage_track",
+                    "run_count": len(coverage_runs),
+                    "point_count": coverage_track_point_count,
+                },
+                "geometry": track_geometry,
+            })
+
         result = {
             "geojson": {"type": "FeatureCollection", "features": features},
 
@@ -1651,11 +1686,17 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
                 "type": "FeatureCollection",
                 "features": rtk_features,
             },
+            "geojson_coverage_track": {
+                "type": "FeatureCollection",
+                "features": coverage_track_features,
+            },
 
             "zone_count": len(zones),
             "nogo_zone_count": len(nogo_zones),
             "mowed_area_polygon_count": len(mowed_polygons),
             "mowed_area_points_count": mowed_area_points_count,
+            "coverage_track_run_count": len(coverage_runs),
+            "coverage_track_point_count": coverage_track_point_count,
             "feature_count": len(features),
             "has_gps_origin": has_origin,
             "enu_base_point": ebp or None,
