@@ -292,3 +292,50 @@ class BreadcrumbAccumulator:
         sk = data.get("session_key")
         self.session_key = tuple(sk) if isinstance(sk, list) else sk
         self._pts = [p for p in data.get("points", []) if isinstance(p, dict)]
+
+
+# Render-quality decimation of a breadcrumb track for exporting as a GeoJSON
+# MultiLineString (see docs/COVERAGE_TRACK_DESIGN.md). 2.0 m mirrors the Gradient
+# coverage style's own gap-split threshold (map_render.py:853, GAP_M2 = 4.0 = 2.0²)
+# but is its own constant — this module doesn't import from map_render.py.
+COVERAGE_TRACK_GAP_M = 2.0
+COVERAGE_TRACK_BUDGET = 800
+
+
+def build_coverage_track(
+    points: list, budget: int = COVERAGE_TRACK_BUDGET, gap_m: float = COVERAGE_TRACK_GAP_M
+) -> list[list[tuple[float, float]]]:
+    """Decimate a breadcrumb track into gap-split, budget-thinned (x, y) runs.
+
+    Geometry only — telemetry fields on breadcrumb dicts are stripped. Splits into
+    runs wherever consecutive points are farther apart than gap_m (so a dock<->zone
+    transit hop doesn't draw a line across the yard, same technique as the Gradient
+    style), then proportionally simplify_path()s each run so the combined point
+    count fits budget while preserving turns. Runs left with fewer than 2 points
+    (can't form a line) are dropped, so the result maps directly onto a
+    MultiLineString's coordinate arrays.
+    """
+    pts = [
+        (float(p["x"]), float(p["y"])) if isinstance(p, dict) else (float(p[0]), float(p[1]))
+        for p in points
+    ]
+    if not pts:
+        return []
+
+    gap2 = gap_m * gap_m
+    runs: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    for p in pts:
+        if cur and (p[0] - cur[-1][0]) ** 2 + (p[1] - cur[-1][1]) ** 2 > gap2:
+            runs.append(cur)
+            cur = []
+        cur.append(p)
+    if cur:
+        runs.append(cur)
+
+    total = sum(len(r) for r in runs) or 1
+    thinned = [
+        simplify_path(r, max(2, int(budget * len(r) / total))) if len(r) > 2 else r
+        for r in runs
+    ]
+    return [r for r in thinned if len(r) >= 2]

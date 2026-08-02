@@ -1,0 +1,69 @@
+"""Tests for path_engine.build_coverage_track — pure geometry, no HA dependency.
+
+Imported by inserting custom_components/lymow onto sys.path and importing the
+bare module name, NOT via `custom_components.lymow.path_engine` — that dotted
+path would execute custom_components/lymow/__init__.py first (package import
+semantics), which imports `homeassistant`, and that package isn't installed in
+this local dev venv (confirmed: `pip show homeassistant` finds nothing here).
+path_engine.py itself has zero HA dependency, so this sidesteps the problem
+without needing homeassistant installed just to run these tests.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "custom_components", "lymow"))
+from path_engine import build_coverage_track  # noqa: E402
+
+
+def test_empty_input_returns_empty_list():
+    assert build_coverage_track([]) == []
+
+
+def test_single_point_is_dropped():
+    # A lone point can't form a line — the run it's in has < 2 points.
+    assert build_coverage_track([{"x": 1.0, "y": 2.0}]) == []
+
+
+def test_two_close_points_form_one_run():
+    pts = [{"x": 0.0, "y": 0.0}, {"x": 0.5, "y": 0.0}]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert runs == [[(0.0, 0.0), (0.5, 0.0)]]
+
+
+def test_gap_splits_into_multiple_runs():
+    # 5 m apart, gap_m=2.0 -> must split into two separate runs.
+    pts = [
+        {"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}, {"x": 0.2, "y": 0.0},
+        {"x": 5.2, "y": 0.0}, {"x": 5.3, "y": 0.0}, {"x": 5.4, "y": 0.0},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 2
+    assert runs[0] == [(0.0, 0.0), (0.1, 0.0), (0.2, 0.0)]
+    assert runs[1] == [(5.2, 0.0), (5.3, 0.0), (5.4, 0.0)]
+
+
+def test_budget_thinning_keeps_endpoints_and_reduces_count():
+    # A long straight run of 100 points thinned to a budget of 10 should keep the
+    # first and last points and end up with far fewer than 100.
+    pts = [{"x": float(i), "y": 0.0} for i in range(100)]
+    runs = build_coverage_track(pts, budget=10, gap_m=2.0)
+    assert len(runs) == 1
+    (run,) = runs
+    assert len(run) <= 10
+    assert run[0] == (0.0, 0.0)
+    assert run[-1] == (99.0, 0.0)
+
+
+def test_telemetry_is_stripped_from_output():
+    pts = [
+        {"x": 0.0, "y": 0.0, "wifi": -55, "rtk_snr": 42},
+        {"x": 1.0, "y": 0.0, "wifi": -60, "act": "main"},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert runs == [[(0.0, 0.0), (1.0, 0.0)]]
+
+
+def test_accepts_tuple_points_too():
+    pts = [(0.0, 0.0), (1.0, 0.0)]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert runs == [[(0.0, 0.0), (1.0, 0.0)]]
