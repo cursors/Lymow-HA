@@ -302,6 +302,59 @@ COVERAGE_TRACK_GAP_M = 2.0
 COVERAGE_TRACK_BUDGET = 800
 
 
+def _merge_artifact_gaps(
+    runs: list[list[tuple[float, float]]], gap2: float
+) -> list[list[tuple[float, float]]]:
+    """Collapse a stretch of isolated 1-point runs that nets to no real
+    displacement — an artifact, not a genuine sparse transit.
+
+    Verified on hardware (2026-08-03): consecutive-1-point-run stretches up to
+    10 points long occur in real sessions, and they're a mixed bag. Some are
+    real: a fast, sparsely-sampled transit where every consecutive pair happens
+    to exceed gap_m, so each point becomes its own 1-point run — that's genuine
+    forward progress and (like today) each point still gets dropped below by
+    the final length filter, since a lone point can't form a line. Others are
+    artifacts: a run of bad points (~41% tagged conn=backprop, the rest plain
+    live points with normal hacc/rtk_snr — likely single-epoch RTK flyaways)
+    that wanders away and lands back near where it started. Left alone, an
+    artifact stretch forces two real splits around it that both then vanish
+    when their now-orphaned 1-point runs get dropped, making two unrelated
+    real runs look deceptively close together.
+
+    The two cases are told apart by NET displacement, not stretch length: for
+    each maximal stretch of 1-point runs, check the distance between the real
+    run before it and the real run after it (skipping the whole stretch). If
+    that bracket is within gap_m, the stretch made no real progress — drop it
+    and splice the two real runs into one continuous run. If the bracket is
+    still farther than gap_m apart, it's genuine sparse progress — leave it
+    untouched.
+    """
+    if len(runs) < 3:
+        return runs
+    result: list[list[tuple[float, float]]] = [runs[0]]
+    i = 1
+    n = len(runs)
+    while i < n:
+        if len(runs[i]) == 1:
+            j = i
+            while j < n and len(runs[j]) == 1:
+                j += 1
+            if j < n:
+                prev_end = result[-1][-1]
+                next_start = runs[j][0]
+                d2 = (prev_end[0] - next_start[0]) ** 2 + (prev_end[1] - next_start[1]) ** 2
+                if d2 <= gap2:
+                    result[-1] = result[-1] + runs[j]
+                    i = j + 1
+                    continue
+            result.extend(runs[i:j])
+            i = j
+            continue
+        result.append(runs[i])
+        i += 1
+    return result
+
+
 def build_coverage_track(
     points: list, budget: int = COVERAGE_TRACK_BUDGET, gap_m: float = COVERAGE_TRACK_GAP_M
 ) -> list[list[tuple[float, float]]]:
@@ -310,10 +363,11 @@ def build_coverage_track(
     Geometry only — telemetry fields on breadcrumb dicts are stripped. Splits into
     runs wherever consecutive points are farther apart than gap_m (so a dock<->zone
     transit hop doesn't draw a line across the yard, same technique as the Gradient
-    style), then proportionally simplify_path()s each run so the combined point
-    count fits budget while preserving turns. Runs left with fewer than 2 points
-    (can't form a line) are dropped, so the result maps directly onto a
-    MultiLineString's coordinate arrays.
+    style), collapses artifact gaps that net no real displacement (see
+    _merge_artifact_gaps), then proportionally simplify_path()s each run so the
+    combined point count fits budget while preserving turns. Runs left with fewer
+    than 2 points (can't form a line) are dropped, so the result maps directly
+    onto a MultiLineString's coordinate arrays.
     """
     pts = [
         (float(p["x"]), float(p["y"])) if isinstance(p, dict) else (float(p[0]), float(p[1]))
@@ -332,6 +386,8 @@ def build_coverage_track(
         cur.append(p)
     if cur:
         runs.append(cur)
+
+    runs = _merge_artifact_gaps(runs, gap2)
 
     total = sum(len(r) for r in runs) or 1
     thinned = [

@@ -67,3 +67,51 @@ def test_accepts_tuple_points_too():
     pts = [(0.0, 0.0), (1.0, 0.0)]
     runs = build_coverage_track(pts, gap_m=2.0)
     assert runs == [[(0.0, 0.0), (1.0, 0.0)]]
+
+
+def test_isolated_spike_does_not_split_the_run():
+    # A single point ~3.4-3.5m from both neighbors, whose neighbors are only
+    # ~0.07m from each other — the exact signature found in production data
+    # (a lone bad/misordered breadcrumb "flying away" and snapping back).
+    # It should be dropped entirely, not treated as two real gap-splits.
+    pts = [
+        {"x": 0.0, "y": 0.0},
+        {"x": 0.1, "y": 0.0},
+        {"x": 3.5, "y": 0.0},
+        {"x": 0.15, "y": 0.05},
+        {"x": 0.2, "y": 0.05},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 1
+    (run,) = runs
+    assert (3.5, 0.0) not in run
+    assert run == [(0.0, 0.0), (0.1, 0.0), (0.15, 0.05), (0.2, 0.05)]
+
+
+def test_consecutive_spikes_are_both_removed():
+    # Two isolated points in a row, both far from the real path on either side,
+    # but the real path's two flanking points are close to each other.
+    pts = [
+        {"x": 0.0, "y": 0.0},
+        {"x": 3.5, "y": 0.0},
+        {"x": 3.6, "y": 3.5},
+        {"x": 0.05, "y": 0.0},
+        {"x": 0.1, "y": 0.0},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 1
+    (run,) = runs
+    assert (3.5, 0.0) not in run
+    assert (3.6, 3.5) not in run
+    assert run == [(0.0, 0.0), (0.05, 0.0), (0.1, 0.0)]
+
+
+def test_genuine_transit_gap_still_splits():
+    # A real transit hop — the far side does NOT snap back close to the near
+    # side — must still produce two separate runs, not get merged away.
+    pts = [
+        {"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}, {"x": 0.2, "y": 0.0},
+        {"x": 5.2, "y": 0.0}, {"x": 5.3, "y": 0.0}, {"x": 5.4, "y": 0.0},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 2
