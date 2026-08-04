@@ -1372,6 +1372,12 @@ class LymowOverdueZonesSensor(LymowEntity, SensorEntity):
         }
 
 
+# geojson_coverage_track recomputes only every N new breadcrumb points (folded into
+# the cache_key below), not every tick — at the ~0.6s/point breadcrumb rate this is
+# the update lag in seconds. Tune directly; no other code depends on this value.
+COVERAGE_TRACK_THROTTLE_POINTS = 5
+
+
 class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
     """Exposes the Lymow zone map as a GeoJSON FeatureCollection.
 
@@ -1452,7 +1458,7 @@ class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
             len(mowed_polygons),
             mowed_area_points_count,
             has_origin,
-            len(breadcrumb_pts) // 15,
+            len(breadcrumb_pts) // COVERAGE_TRACK_THROTTLE_POINTS,
         )
         if cache_key == self._cache_key and self._geojson_cache is not None:
             return self._geojson_cache

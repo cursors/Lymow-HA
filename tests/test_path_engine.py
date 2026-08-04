@@ -115,3 +115,35 @@ def test_genuine_transit_gap_still_splits():
     ]
     runs = build_coverage_track(pts, gap_m=2.0)
     assert len(runs) == 2
+
+
+def test_genuine_sparse_midrow_stretch_is_stitched_not_dropped():
+    # A brief comms hiccup mid-row: real, monotonic forward progress along the
+    # row, but each point during the hiccup lands >2m from its neighbor (so
+    # each becomes its own 1-point run). The bracket distance across the whole
+    # stretch is large (real progress, not a "there and back"), so it must NOT
+    # be merged as an artifact — but it also shouldn't just vanish (today: each
+    # 1-point run gets dropped, leaving an unrepresented gap in a straight
+    # row). It should survive as its own sparse-but-real run.
+    pts = [
+        {"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}, {"x": 0.2, "y": 0.0},
+        {"x": 3.0, "y": 0.0}, {"x": 6.0, "y": 0.0},
+        {"x": 9.0, "y": 0.0}, {"x": 9.1, "y": 0.0}, {"x": 9.2, "y": 0.0},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 3
+    assert runs[1] == [(3.0, 0.0), (6.0, 0.0)]
+
+
+def test_truly_isolated_single_point_with_no_sibling_still_dropped():
+    # A stretch of exactly one point (no neighboring 1-point runs to stitch
+    # with) still can't form a line on its own — must still be dropped, same
+    # as before this stitching behavior existed.
+    pts = [
+        {"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}, {"x": 0.2, "y": 0.0},
+        {"x": 5.0, "y": 0.0},
+        {"x": 10.0, "y": 0.0}, {"x": 10.1, "y": 0.0}, {"x": 10.2, "y": 0.0},
+    ]
+    runs = build_coverage_track(pts, gap_m=2.0)
+    assert len(runs) == 2
+    assert (5.0, 0.0) not in [p for r in runs for p in r]
