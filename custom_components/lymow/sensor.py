@@ -1375,7 +1375,7 @@ class LymowOverdueZonesSensor(LymowEntity, SensorEntity):
 # geojson_coverage_track recomputes only every N new breadcrumb points (folded into
 # the cache_key below), not every tick — at the ~0.6s/point breadcrumb rate this is
 # the update lag in seconds. Tune directly; no other code depends on this value.
-COVERAGE_TRACK_THROTTLE_POINTS = 5
+COVERAGE_TRACK_THROTTLE_POINTS = 3
 
 
 class LymowMapGeoJsonSensor(LymowEntity, SensorEntity):
