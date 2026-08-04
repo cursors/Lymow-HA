@@ -299,7 +299,7 @@ class BreadcrumbAccumulator:
 # coverage style's own gap-split threshold (map_render.py:853, GAP_M2 = 4.0 = 2.0²)
 # but is its own constant — this module doesn't import from map_render.py.
 COVERAGE_TRACK_GAP_M = 2.0
-COVERAGE_TRACK_BUDGET = 800
+COVERAGE_TRACK_BUDGET = 400
 
 
 def _merge_artifact_gaps(
